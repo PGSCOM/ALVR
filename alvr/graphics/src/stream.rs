@@ -1,6 +1,6 @@
 use super::{GraphicsContext, MAX_PUSH_CONSTANTS_SIZE, staging::StagingRenderer};
 use alvr_common::{
-    ViewParams,
+    ViewParams, Pose,
     glam::{self, Mat4, UVec2, Vec3, Vec4},
 };
 use alvr_session::{FoveatedEncodingConfig, PassthroughMode, UpscalingConfig};
@@ -17,6 +17,12 @@ use wgpu::{
     include_wgsl,
 };
 
+#[derive(Debug, Clone)]
+pub struct HandTrackingData {
+    pub left_hand_pose: Option<Pose>,
+    pub right_hand_pose: Option<Pose>,
+}
+
 const FLOAT_SIZE: u32 = mem::size_of::<f32>() as u32;
 const U32_SIZE: u32 = mem::size_of::<u32>() as u32;
 const VEC4_SIZE: u32 = mem::size_of::<Vec4>() as u32;
@@ -29,6 +35,10 @@ const ALPHA_CONST_OFFSET: u32 = PASSTHROUGH_MODE_OFFSET + U32_SIZE;
 const CK_CHANNEL0_CONST_OFFSET: u32 = ALPHA_CONST_OFFSET + FLOAT_SIZE + U32_SIZE;
 const CK_CHANNEL1_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET + VEC4_SIZE;
 const CK_CHANNEL2_CONST_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET + VEC4_SIZE;
+// Reuse chroma key channels for hand data when in hand area passthrough mode
+const HAND_LEFT_POS_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET;
+const HAND_RIGHT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET;
+const HAND_AREA_CONFIG_OFFSET: u32 = CK_CHANNEL2_CONST_OFFSET;
 const PUSH_CONSTANTS_SIZE: u32 = CK_CHANNEL2_CONST_OFFSET + VEC4_SIZE;
 
 const _: () = assert!(
@@ -251,6 +261,7 @@ impl StreamRenderer {
         hardware_buffer: *mut c_void,
         view_params: [StreamViewParams; 2],
         passthrough: Option<&PassthroughMode>,
+        hand_tracking: Option<&HandTrackingData>,
     ) {
         // if hardware_buffer is available copy stream to staging texture
         if !hardware_buffer.is_null() {
@@ -329,7 +340,7 @@ impl StreamRenderer {
                 &(view_idx as u32).to_le_bytes(),
             );
             render_pass.set_bind_group(0, &self.views_objects[view_idx].bind_group, &[]);
-            set_passthrough_push_constants(&mut render_pass, passthrough);
+            set_passthrough_push_constants(&mut render_pass, passthrough, hand_tracking);
             render_pass.draw(0..4, 0..1);
         }
 
@@ -337,7 +348,11 @@ impl StreamRenderer {
     }
 }
 
-fn set_passthrough_push_constants(render_pass: &mut RenderPass, config: Option<&PassthroughMode>) {
+fn set_passthrough_push_constants(
+    render_pass: &mut RenderPass, 
+    config: Option<&PassthroughMode>,
+    hand_tracking: Option<&HandTrackingData>,
+) {
     const DEG_TO_NORM: f32 = 1. / 360.;
 
     fn set_u32(render_pass: &mut RenderPass, offset: u32, value: u32) {
@@ -434,6 +449,33 @@ fn set_passthrough_push_constants(render_pass: &mut RenderPass, config: Option<&
                     config.value_start_min,
                     config.value_end_min,
                     config.value_end_max,
+                ),
+            );
+        }
+        Some(PassthroughMode::HandAreaPassthrough(config)) => {
+            set_u32(render_pass, PASSTHROUGH_MODE_OFFSET, 3);
+            set_float(render_pass, ALPHA_CONST_OFFSET, config.opacity);
+
+            // Set hand positions (or default positions if tracking not available)
+            let left_pos = hand_tracking
+                .and_then(|tracking| tracking.left_hand_pose.map(|pose| pose.position))
+                .unwrap_or(Vec3::new(-0.3, -0.2, -0.5));  // Default left hand position
+            let right_pos = hand_tracking
+                .and_then(|tracking| tracking.right_hand_pose.map(|pose| pose.position))
+                .unwrap_or(Vec3::new(0.3, -0.2, -0.5));   // Default right hand position
+
+            set_vec4(render_pass, HAND_LEFT_POS_OFFSET, Vec4::new(left_pos.x, left_pos.y, left_pos.z, 0.0));
+            set_vec4(render_pass, HAND_RIGHT_POS_OFFSET, Vec4::new(right_pos.x, right_pos.y, right_pos.z, 0.0));
+
+            // Set hand area configuration: radius, feathering_radius, enable_feathering, static_mask
+            set_vec4(
+                render_pass,
+                HAND_AREA_CONFIG_OFFSET,
+                Vec4::new(
+                    config.hand_area_radius,
+                    config.feathering_radius,
+                    if config.enable_feathering { 1.0 } else { 0.0 },
+                    if config.static_mask { 1.0 } else { 0.0 },
                 ),
             );
         }

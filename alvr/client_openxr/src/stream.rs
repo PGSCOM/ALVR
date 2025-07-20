@@ -10,10 +10,10 @@ use alvr_common::{
     HAND_LEFT_ID, HAND_RIGHT_ID, HEAD_ID, Pose, RelaxedAtomic, ViewParams,
     anyhow::Result,
     error,
-    glam::{UVec2, Vec2},
+    glam::{Quat, UVec2, Vec2, Vec3},
     parking_lot::RwLock,
 };
-use alvr_graphics::{GraphicsContext, StreamRenderer, StreamViewParams};
+use alvr_graphics::{GraphicsContext, StreamRenderer, StreamViewParams, HandTrackingData};
 use alvr_packets::{RealTimeConfig, StreamConfig, TrackingData};
 use alvr_session::{
     ClientsideFoveationConfig, ClientsideFoveationMode, ClientsidePostProcessingConfig, CodecType,
@@ -245,6 +245,49 @@ impl StreamContext {
         self.config.passthrough.is_some()
     }
 
+    fn get_hand_tracking_data(&self, xr_time: xr::Time) -> Option<HandTrackingData> {
+        let interaction_ctx = self.interaction_context.read();
+        let hands = &interaction_ctx.hands;
+
+        // Get hand poses using the view reference space for proper coordinate system
+        let left_hand_pose = hands.get(&HAND_LEFT_ID).and_then(|hand_source| {
+            hand_source.grip_space
+                .relate(&self.view_reference_space, xr_time)
+                .ok()
+                .map(|(location, _velocity)| {
+                    let pos = location.pose.position;
+                    let rot = location.pose.orientation;
+                    Pose {
+                        position: Vec3::new(pos.x, pos.y, pos.z),
+                        orientation: Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
+                    }
+                })
+        });
+
+        let right_hand_pose = hands.get(&HAND_RIGHT_ID).and_then(|hand_source| {
+            hand_source.grip_space
+                .relate(&self.view_reference_space, xr_time)
+                .ok()
+                .map(|(location, _velocity)| {
+                    let pos = location.pose.position;
+                    let rot = location.pose.orientation;
+                    Pose {
+                        position: Vec3::new(pos.x, pos.y, pos.z),
+                        orientation: Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
+                    }
+                })
+        });
+
+        if left_hand_pose.is_some() || right_hand_pose.is_some() {
+            Some(HandTrackingData {
+                left_hand_pose,
+                right_hand_pose,
+            })
+        } else {
+            None
+        }
+    }
+
     pub fn update_reference_space(&mut self) {
         self.input_thread_running.set(false);
 
@@ -412,6 +455,13 @@ impl StreamContext {
             openxr_display_time = vsync_time;
         }
 
+        // Get hand tracking data for passthrough if needed
+        let hand_tracking = if matches!(self.config.passthrough.as_ref(), Some(PassthroughMode::HandAreaPassthrough(_))) {
+            self.get_hand_tracking_data(xr_vsync_time)
+        } else {
+            None
+        };
+
         self.renderer.render(
             buffer_ptr,
             [
@@ -427,6 +477,7 @@ impl StreamContext {
                 },
             ],
             self.config.passthrough.as_ref(),
+            hand_tracking.as_ref(),
         );
 
         self.swapchains[0].release_image().unwrap();

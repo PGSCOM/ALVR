@@ -43,9 +43,12 @@ override C_RIGHT_Y: f32 = 0.0;
 struct PushConstant {
     reprojection_transform: mat4x4f,
     view_idx: u32,
-    passthrough_mode: u32, // 0: Blend, 1: RGB chroma key, 2: HSV chroma key
+    passthrough_mode: u32, // 0: Blend, 1: RGB chroma key, 2: HSV chroma key, 3: Hand area passthrough
     blend_alpha: f32,
     _align: u32,
+    // These channels are reused for different data based on passthrough_mode:
+    // - For chroma key modes: ck_channel0, ck_channel1, ck_channel2
+    // - For hand area mode: hand_left_pos, hand_right_pos, hand_area_config
     ck_channel0: vec4f,
     ck_channel1: vec4f,
     ck_channel2: vec4f,
@@ -148,14 +151,18 @@ fn fragment_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     }
 
     var alpha = pc.blend_alpha; // Default to Blend passthrough mode
-    if pc.passthrough_mode != 0 { // Chroma key
+    if pc.passthrough_mode == 1 || pc.passthrough_mode == 2 { // Chroma key modes
         var current = color;
-        if pc.passthrough_mode == 3 { // HSV mode
+        if pc.passthrough_mode == 2 { // HSV mode
             current = rgb_to_hsv(color);
         }
         let mask = chroma_key_mask(current);
 
         // Note: because of this calculation, we require premultiplied alpha option in the XR layer
+        color = max(color * mask, vec3f(0.0));
+        alpha = mask;
+    } else if pc.passthrough_mode == 3 { // Hand area passthrough
+        let mask = hand_area_mask(uv);
         color = max(color * mask, vec3f(0.0));
         alpha = mask;
     }
@@ -198,6 +205,60 @@ fn rgb_to_hsv(rgb: vec3f) -> vec3f {
     }
 
     return vec3f(h, s, v);
+}
+
+fn hand_area_mask(uv: vec2f) -> f32 {
+    // When in hand area passthrough mode, ck_channels are repurposed:
+    // ck_channel0 = hand_left_pos
+    // ck_channel1 = hand_right_pos  
+    // ck_channel2 = hand_area_config (x: radius, y: feathering_radius, z: enable_feathering, w: static_mask)
+    let radius = pc.ck_channel2.x;
+    let feathering_radius = pc.ck_channel2.y;
+    let enable_feathering = pc.ck_channel2.z > 0.5;
+    let static_mask = pc.ck_channel2.w > 0.5;
+
+    // Convert UV coordinates to world space position estimate
+    // This is a simplified approach - in a real implementation, you'd want proper
+    // screen-to-world coordinate transformation
+    let world_pos = vec3f((uv.x - 0.5) * 2.0, (0.5 - uv.y) * 2.0, -1.0);
+
+    var left_distance = 1000.0;
+    var right_distance = 1000.0;
+
+    if static_mask {
+        // Use fixed hand positions for static mask
+        let left_static_pos = vec3f(-0.3, -0.2, -0.5);
+        let right_static_pos = vec3f(0.3, -0.2, -0.5);
+        left_distance = distance(world_pos, left_static_pos);
+        right_distance = distance(world_pos, right_static_pos);
+    } else {
+        // Use tracked hand positions from ck_channel0 and ck_channel1
+        left_distance = distance(world_pos, pc.ck_channel0.xyz);
+        right_distance = distance(world_pos, pc.ck_channel1.xyz);
+    }
+
+    // Calculate mask for each hand
+    var mask = 0.0;
+    
+    if left_distance <= radius {
+        if enable_feathering && left_distance > radius - feathering_radius {
+            let fade = (radius - left_distance) / feathering_radius;
+            mask = max(mask, fade);
+        } else {
+            mask = 1.0;
+        }
+    }
+    
+    if right_distance <= radius {
+        if enable_feathering && right_distance > radius - feathering_radius {
+            let fade = (radius - right_distance) / feathering_radius;
+            mask = max(mask, fade);
+        } else {
+            mask = 1.0;
+        }
+    }
+
+    return mask;
 }
 
 //============================================================================================================
