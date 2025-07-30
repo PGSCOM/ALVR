@@ -247,36 +247,33 @@ impl StreamContext {
 
     fn get_hand_tracking_data(&self, xr_time: xr::Time) -> Option<HandTrackingData> {
         let interaction_ctx = self.interaction_context.read();
-        let hands = &interaction_ctx.hands;
+        let hands = &interaction_ctx.hands_interaction;
 
         // Get hand poses using the view reference space for proper coordinate system
-        let left_hand_pose = hands.get(&HAND_LEFT_ID).and_then(|hand_source| {
-            hand_source.grip_space
-                .relate(&self.view_reference_space, xr_time)
-                .ok()
-                .map(|(location, _velocity)| {
-                    let pos = location.pose.position;
-                    let rot = location.pose.orientation;
-                    Pose {
-                        position: Vec3::new(pos.x, pos.y, pos.z),
-                        orientation: Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
-                    }
-                })
-        });
+        // Index 0 = left hand, Index 1 = right hand
+        let left_hand_pose = hands[0].grip_space
+            .relate(&self.view_reference_space, xr_time)
+            .ok()
+            .map(|(location, _velocity)| {
+                let pos = location.pose.position;
+                let rot = location.pose.orientation;
+                Pose {
+                    position: Vec3::new(pos.x, pos.y, pos.z),
+                    orientation: Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
+                }
+            });
 
-        let right_hand_pose = hands.get(&HAND_RIGHT_ID).and_then(|hand_source| {
-            hand_source.grip_space
-                .relate(&self.view_reference_space, xr_time)
-                .ok()
-                .map(|(location, _velocity)| {
-                    let pos = location.pose.position;
-                    let rot = location.pose.orientation;
-                    Pose {
-                        position: Vec3::new(pos.x, pos.y, pos.z),
-                        orientation: Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
-                    }
-                })
-        });
+        let right_hand_pose = hands[1].grip_space
+            .relate(&self.view_reference_space, xr_time)
+            .ok()
+            .map(|(location, _velocity)| {
+                let pos = location.pose.position;
+                let rot = location.pose.orientation;
+                Pose {
+                    position: Vec3::new(pos.x, pos.y, pos.z),
+                    orientation: Quat::from_xyzw(rot.x, rot.y, rot.z, rot.w),
+                }
+            });
 
         if left_hand_pose.is_some() || right_hand_pose.is_some() {
             Some(HandTrackingData {
