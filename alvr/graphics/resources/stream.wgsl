@@ -217,42 +217,53 @@ fn hand_area_mask(uv: vec2f) -> f32 {
     let enable_feathering = pc.ck_channel2.z > 0.5;
     let static_mask = pc.ck_channel2.w > 0.5;
 
-    // Convert UV coordinates to world space position estimate
-    // This is a simplified approach - in a real implementation, you'd want proper
-    // screen-to-world coordinate transformation
-    let world_pos = vec3f((uv.x - 0.5) * 2.0, (0.5 - uv.y) * 2.0, -1.0);
+    // Convert UV coordinates to screen space coordinates (normalized -1 to 1)
+    let screen_pos = vec2f((uv.x - 0.5) * 2.0, (0.5 - uv.y) * 2.0);
 
     var left_distance = 1000.0;
     var right_distance = 1000.0;
 
     if static_mask {
-        // Use fixed hand positions for static mask
-        let left_static_pos = vec3f(-0.3, -0.2, -0.5);
-        let right_static_pos = vec3f(0.3, -0.2, -0.5);
-        left_distance = distance(world_pos, left_static_pos);
-        right_distance = distance(world_pos, right_static_pos);
+        // Use fixed hand positions for static mask in screen space
+        let left_static_pos = vec2f(-0.4, -0.3);
+        let right_static_pos = vec2f(0.4, -0.3);
+        left_distance = distance(screen_pos, left_static_pos);
+        right_distance = distance(screen_pos, right_static_pos);
     } else {
-        // Use tracked hand positions from ck_channel0 and ck_channel1
-        left_distance = distance(world_pos, pc.ck_channel0.xyz);
-        right_distance = distance(world_pos, pc.ck_channel1.xyz);
+        // Project 3D hand positions to 2D screen space
+        // Simple orthographic projection assuming hands are roughly at arm's length
+        // X and Y from hand tracking are used directly, Z depth affects scaling
+        let depth_scale = 1.0 / max(abs(pc.ck_channel0.z), 0.3); // Prevent division by zero
+        let left_screen_pos = vec2f(pc.ck_channel0.x * depth_scale, pc.ck_channel0.y * depth_scale);
+        
+        let right_depth_scale = 1.0 / max(abs(pc.ck_channel1.z), 0.3);
+        let right_screen_pos = vec2f(pc.ck_channel1.x * right_depth_scale, pc.ck_channel1.y * right_depth_scale);
+        
+        left_distance = distance(screen_pos, left_screen_pos);
+        right_distance = distance(screen_pos, right_screen_pos);
     }
+
+    // Scale radius to screen space (convert from meters to normalized coordinates)
+    // At arm's length (~0.6m), 15cm hand radius should be about 0.25 in screen space
+    let screen_radius = radius * 1.5; // Empirical scaling factor
+    let screen_feathering_radius = feathering_radius * 1.5;
 
     // Calculate mask for each hand - return low values for passthrough areas (hand areas)
     // and high values for VR content areas (non-hand areas)
     var mask = 1.0; // Default to showing VR content
     
-    if left_distance <= radius {
-        if enable_feathering && left_distance > radius - feathering_radius {
-            let fade = (radius - left_distance) / feathering_radius;
+    if left_distance <= screen_radius {
+        if enable_feathering && left_distance > screen_radius - screen_feathering_radius {
+            let fade = (screen_radius - left_distance) / screen_feathering_radius;
             mask = min(mask, 1.0 - fade); // Invert fade for passthrough
         } else {
             mask = 0.0; // Full passthrough in hand area
         }
     }
     
-    if right_distance <= radius {
-        if enable_feathering && right_distance > radius - feathering_radius {
-            let fade = (radius - right_distance) / feathering_radius;
+    if right_distance <= screen_radius {
+        if enable_feathering && right_distance > screen_radius - screen_feathering_radius {
+            let fade = (screen_radius - right_distance) / screen_feathering_radius;
             mask = min(mask, 1.0 - fade); // Invert fade for passthrough
         } else {
             mask = 0.0; // Full passthrough in hand area

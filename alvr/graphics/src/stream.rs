@@ -459,10 +459,10 @@ fn set_passthrough_push_constants(
             // Set hand positions (or default positions if tracking not available)
             let left_pos = hand_tracking
                 .and_then(|tracking| tracking.left_hand_pose.map(|pose| pose.position))
-                .unwrap_or(Vec3::new(-0.3, -0.2, -0.5));  // Default left hand position
+                .unwrap_or(Vec3::new(-0.2, -0.15, -0.3));  // Default left hand position in meters
             let right_pos = hand_tracking
                 .and_then(|tracking| tracking.right_hand_pose.map(|pose| pose.position))
-                .unwrap_or(Vec3::new(0.3, -0.2, -0.5));   // Default right hand position
+                .unwrap_or(Vec3::new(0.2, -0.15, -0.3));   // Default right hand position in meters
 
             set_vec4(render_pass, HAND_LEFT_POS_OFFSET, Vec4::new(left_pos.x, left_pos.y, left_pos.z, 0.0));
             set_vec4(render_pass, HAND_RIGHT_POS_OFFSET, Vec4::new(right_pos.x, right_pos.y, right_pos.z, 0.0));
