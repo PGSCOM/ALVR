@@ -237,24 +237,25 @@ fn hand_area_mask(uv: vec2f) -> f32 {
         right_distance = distance(world_pos, pc.ck_channel1.xyz);
     }
 
-    // Calculate mask for each hand
-    var mask = 0.0;
+    // Calculate mask for each hand - return low values for passthrough areas (hand areas)
+    // and high values for VR content areas (non-hand areas)
+    var mask = 1.0; // Default to showing VR content
     
     if left_distance <= radius {
         if enable_feathering && left_distance > radius - feathering_radius {
             let fade = (radius - left_distance) / feathering_radius;
-            mask = max(mask, fade);
+            mask = min(mask, 1.0 - fade); // Invert fade for passthrough
         } else {
-            mask = 1.0;
+            mask = 0.0; // Full passthrough in hand area
         }
     }
     
     if right_distance <= radius {
         if enable_feathering && right_distance > radius - feathering_radius {
             let fade = (radius - right_distance) / feathering_radius;
-            mask = max(mask, fade);
+            mask = min(mask, 1.0 - fade); // Invert fade for passthrough
         } else {
-            mask = 1.0;
+            mask = 0.0; // Full passthrough in hand area
         }
     }
 
