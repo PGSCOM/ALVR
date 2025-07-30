@@ -230,23 +230,34 @@ fn hand_area_mask(uv: vec2f) -> f32 {
         left_distance = distance(screen_pos, left_static_pos);
         right_distance = distance(screen_pos, right_static_pos);
     } else {
-        // Project 3D hand positions to 2D screen space
-        // Simple orthographic projection assuming hands are roughly at arm's length
-        // X and Y from hand tracking are used directly, Z depth affects scaling
-        let depth_scale = 1.0 / max(abs(pc.ck_channel0.z), 0.3); // Prevent division by zero
-        let left_screen_pos = vec2f(pc.ck_channel0.x * depth_scale, pc.ck_channel0.y * depth_scale);
+        // Transform 3D hand positions to screen space using the view-projection matrix
+        // Hand positions are in world space and need to be projected to screen coordinates
         
-        let right_depth_scale = 1.0 / max(abs(pc.ck_channel1.z), 0.3);
-        let right_screen_pos = vec2f(pc.ck_channel1.x * right_depth_scale, pc.ck_channel1.y * right_depth_scale);
+        // Project left hand position
+        let left_world_pos = vec4f(pc.ck_channel0.x, pc.ck_channel0.y, pc.ck_channel0.z, 1.0);
+        let left_clip_pos = pc.reprojection_transform * left_world_pos;
         
-        left_distance = distance(screen_pos, left_screen_pos);
-        right_distance = distance(screen_pos, right_screen_pos);
+        // Perform perspective division to get normalized device coordinates
+        if left_clip_pos.w > 0.0001 { // Check for valid projection
+            let left_ndc = left_clip_pos.xy / left_clip_pos.w;
+            left_distance = distance(screen_pos, left_ndc);
+        }
+        
+        // Project right hand position
+        let right_world_pos = vec4f(pc.ck_channel1.x, pc.ck_channel1.y, pc.ck_channel1.z, 1.0);
+        let right_clip_pos = pc.reprojection_transform * right_world_pos;
+        
+        // Perform perspective division to get normalized device coordinates
+        if right_clip_pos.w > 0.0001 { // Check for valid projection
+            let right_ndc = right_clip_pos.xy / right_clip_pos.w;
+            right_distance = distance(screen_pos, right_ndc);
+        }
     }
 
     // Scale radius to screen space (convert from meters to normalized coordinates)
-    // At arm's length (~0.6m), 15cm hand radius should be about 0.25 in screen space
-    let screen_radius = radius * 1.5; // Empirical scaling factor
-    let screen_feathering_radius = feathering_radius * 1.5;
+    // The radius is already in meters, so we scale it to screen space based on typical viewing distance
+    let screen_radius = radius * 4.0; // Scale factor to convert from meters to screen space
+    let screen_feathering_radius = feathering_radius * 4.0;
 
     // Calculate mask for each hand - return low values for passthrough areas (hand areas)
     // and high values for VR content areas (non-hand areas)
