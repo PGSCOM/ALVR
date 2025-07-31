@@ -164,7 +164,8 @@ fn fragment_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     } else if pc.passthrough_mode == 3 { // Hand area passthrough
         let mask = hand_area_mask(uv);
         color = max(color * mask, vec3f(0.0));
-        alpha = mask;
+        // FIX: Interpolar el alfa usando la opacidad de la configuración y la máscara
+        alpha = mix(1.0 - pc.blend_alpha, 1.0, mask);
     }
 
     return vec4f(color, alpha);

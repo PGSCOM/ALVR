@@ -249,10 +249,10 @@ impl StreamContext {
         let interaction_ctx = self.interaction_context.read();
         let hands = &interaction_ctx.hands_interaction;
 
-        // Get hand poses using the view reference space for proper coordinate system
-        // Index 0 = left hand, Index 1 = right hand
+        // Obtener poses de manos usando stage_reference_space para coordenadas de mundo
+        // Índice 0 = mano izquierda, Índice 1 = mano derecha
         let left_hand_pose = hands[0].grip_space
-            .relate(&self.view_reference_space, xr_time)
+            .relate(&self.stage_reference_space, xr_time) // <- FIX: cambiado de view_reference_space
             .ok()
             .map(|(location, _velocity)| {
                 let pos = location.pose.position;
@@ -264,7 +264,7 @@ impl StreamContext {
             });
 
         let right_hand_pose = hands[1].grip_space
-            .relate(&self.view_reference_space, xr_time)
+            .relate(&self.stage_reference_space, xr_time) // <- FIX: cambiado de view_reference_space
             .ok()
             .map(|(location, _velocity)| {
                 let pos = location.pose.position;
