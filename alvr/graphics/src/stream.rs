@@ -32,10 +32,14 @@ const TRANSFORM_CONST_OFFSET: u32 = 0;
 const VIEW_INDEX_CONST_OFFSET: u32 = TRANSFORM_SIZE;
 const PASSTHROUGH_MODE_OFFSET: u32 = VIEW_INDEX_CONST_OFFSET + U32_SIZE;
 const ALPHA_CONST_OFFSET: u32 = PASSTHROUGH_MODE_OFFSET + U32_SIZE;
+const CK_CHANNEL0_CONST_OFFSET: u32 = ALPHA_CONST_OFFSET + FLOAT_SIZE + U32_SIZE;
+const CK_CHANNEL1_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET + VEC4_SIZE;
+const CK_CHANNEL2_CONST_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET + VEC4_SIZE;
 
-// Offsets para los nuevos push constants
+// Offsets para los nuevos push constants para hand area passthrough
 const VIEW_PROJ_MATRIX_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET; // mat4x4f (16 floats)
 const HAND_LEFT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET;          // vec4f
+const HAND_RIGHT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET + VEC4_SIZE; // vec4f
 const HAND_AREA_CONFIG_OFFSET: u32 = CK_CHANNEL2_CONST_OFFSET;       // vec4f
 const PUSH_CONSTANTS_SIZE: u32 = CK_CHANNEL2_CONST_OFFSET + VEC4_SIZE;
 
@@ -359,11 +363,15 @@ impl StreamRenderer {
                 vp_matrix.w_axis = Vec4::new(right_pos.x, right_pos.y, right_pos.z, 1.0);
 
                 // Pasar la matriz VP como push constant (mat4x4f = 16 floats = 64 bytes)
-                let vp_matrix_bytes: &[u8] = bytemuck::cast_slice(&vp_matrix.to_cols_array());
+                let vp_matrix_bytes = vp_matrix
+                    .to_cols_array()
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<u8>>();
                 render_pass.set_push_constants(
                     ShaderStages::VERTEX_FRAGMENT,
                     VIEW_PROJ_MATRIX_CONST_OFFSET,
-                    vp_matrix_bytes,
+                    &vp_matrix_bytes,
                 );
 
                 // Pasar la posición de la mano izquierda (vec4f)
@@ -371,7 +379,22 @@ impl StreamRenderer {
                 render_pass.set_push_constants(
                     ShaderStages::VERTEX_FRAGMENT,
                     HAND_LEFT_POS_OFFSET,
-                    bytemuck::bytes_of(&left_pos_vec4),
+                    &left_pos_vec4.x.to_le_bytes(),
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_LEFT_POS_OFFSET + FLOAT_SIZE,
+                    &left_pos_vec4.y.to_le_bytes(),
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_LEFT_POS_OFFSET + 2 * FLOAT_SIZE,
+                    &left_pos_vec4.z.to_le_bytes(),
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_LEFT_POS_OFFSET + 3 * FLOAT_SIZE,
+                    &left_pos_vec4.w.to_le_bytes(),
                 );
 
                 // Pasar la configuración del área de la mano (vec4f)
@@ -384,7 +407,22 @@ impl StreamRenderer {
                 render_pass.set_push_constants(
                     ShaderStages::VERTEX_FRAGMENT,
                     HAND_AREA_CONFIG_OFFSET,
-                    bytemuck::bytes_of(&hand_config_vec4),
+                    &hand_config_vec4.x.to_le_bytes(),
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_AREA_CONFIG_OFFSET + FLOAT_SIZE,
+                    &hand_config_vec4.y.to_le_bytes(),
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_AREA_CONFIG_OFFSET + 2 * FLOAT_SIZE,
+                    &hand_config_vec4.z.to_le_bytes(),
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_AREA_CONFIG_OFFSET + 3 * FLOAT_SIZE,
+                    &hand_config_vec4.w.to_le_bytes(),
                 );
             } else {
                 // Otros modos: lógica original
