@@ -32,13 +32,11 @@ const TRANSFORM_CONST_OFFSET: u32 = 0;
 const VIEW_INDEX_CONST_OFFSET: u32 = TRANSFORM_SIZE;
 const PASSTHROUGH_MODE_OFFSET: u32 = VIEW_INDEX_CONST_OFFSET + U32_SIZE;
 const ALPHA_CONST_OFFSET: u32 = PASSTHROUGH_MODE_OFFSET + U32_SIZE;
-const CK_CHANNEL0_CONST_OFFSET: u32 = ALPHA_CONST_OFFSET + FLOAT_SIZE + U32_SIZE;
-const CK_CHANNEL1_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET + VEC4_SIZE;
-const CK_CHANNEL2_CONST_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET + VEC4_SIZE;
-// Reuse chroma key channels for hand data when in hand area passthrough mode
-const HAND_LEFT_POS_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET;
-const HAND_RIGHT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET;
-const HAND_AREA_CONFIG_OFFSET: u32 = CK_CHANNEL2_CONST_OFFSET;
+
+// Offsets para los nuevos push constants
+const VIEW_PROJ_MATRIX_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET; // mat4x4f (16 floats)
+const HAND_LEFT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET;          // vec4f
+const HAND_AREA_CONFIG_OFFSET: u32 = CK_CHANNEL2_CONST_OFFSET;       // vec4f
 const PUSH_CONSTANTS_SIZE: u32 = CK_CHANNEL2_CONST_OFFSET + VEC4_SIZE;
 
 const _: () = assert!(
@@ -340,7 +338,59 @@ impl StreamRenderer {
                 &(view_idx as u32).to_le_bytes(),
             );
             render_pass.set_bind_group(0, &self.views_objects[view_idx].bind_group, &[]);
-            set_passthrough_push_constants(&mut render_pass, passthrough, hand_tracking);
+
+            // --- NUEVO: Pasar matriz de vista-proyección y datos de mano para HandAreaPassthrough ---
+            if let Some(PassthroughMode::HandAreaPassthrough(config)) = passthrough {
+                // Calcular la matriz de vista-proyección (VP) para el ojo actual
+                let view_pose = &view_params.output_view_params.pose;
+                let view_matrix = Mat4::from_quat(view_pose.orientation).inverse() * Mat4::from_translation(-view_pose.position);
+                let proj_matrix = super::projection_from_fov(view_params.output_view_params.fov);
+                let mut vp_matrix = proj_matrix * view_matrix;
+
+                // Obtener posiciones de las manos
+                let left_pos = hand_tracking
+                    .and_then(|t| t.left_hand_pose.map(|p| p.position))
+                    .unwrap_or(Vec3::new(-0.2, -0.15, -0.3));
+                let right_pos = hand_tracking
+                    .and_then(|t| t.right_hand_pose.map(|p| p.position))
+                    .unwrap_or(Vec3::new(0.2, -0.15, -0.3));
+
+                // Trampa: pasar la posición de la mano derecha en la última columna de la matriz VP
+                vp_matrix.w_axis = Vec4::new(right_pos.x, right_pos.y, right_pos.z, 1.0);
+
+                // Pasar la matriz VP como push constant (mat4x4f = 16 floats = 64 bytes)
+                let vp_matrix_bytes: &[u8] = bytemuck::cast_slice(&vp_matrix.to_cols_array());
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    VIEW_PROJ_MATRIX_CONST_OFFSET,
+                    vp_matrix_bytes,
+                );
+
+                // Pasar la posición de la mano izquierda (vec4f)
+                let left_pos_vec4 = Vec4::new(left_pos.x, left_pos.y, left_pos.z, 0.0);
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_LEFT_POS_OFFSET,
+                    bytemuck::bytes_of(&left_pos_vec4),
+                );
+
+                // Pasar la configuración del área de la mano (vec4f)
+                let hand_config_vec4 = Vec4::new(
+                    config.hand_area_radius,
+                    config.feathering_radius,
+                    if config.enable_feathering { 1.0 } else { 0.0 },
+                    if config.static_mask { 1.0 } else { 0.0 },
+                );
+                render_pass.set_push_constants(
+                    ShaderStages::VERTEX_FRAGMENT,
+                    HAND_AREA_CONFIG_OFFSET,
+                    bytemuck::bytes_of(&hand_config_vec4),
+                );
+            } else {
+                // Otros modos: lógica original
+                set_passthrough_push_constants(&mut render_pass, passthrough, hand_tracking);
+            }
+
             render_pass.draw(0..4, 0..1);
         }
 

@@ -43,15 +43,12 @@ override C_RIGHT_Y: f32 = 0.0;
 struct PushConstant {
     reprojection_transform: mat4x4f,
     view_idx: u32,
-    passthrough_mode: u32, // 0: Blend, 1: RGB chroma key, 2: HSV chroma key, 3: Hand area passthrough
+    passthrough_mode: u32,
     blend_alpha: f32,
     _align: u32,
-    // These channels are reused for different data based on passthrough_mode:
-    // - For chroma key modes: ck_channel0, ck_channel1, ck_channel2
-    // - For hand area mode: hand_left_pos, hand_right_pos, hand_area_config
-    ck_channel0: vec4f,
-    ck_channel1: vec4f,
-    ck_channel2: vec4f,
+    view_proj_matrix: mat4x4f, // Nueva matriz de vista-proyección
+    hand_left_pos: vec4f,      // Posición de la mano izquierda
+    hand_area_config: vec4f,   // Configuración del área de la mano
 }
 var<push_constant> pc: PushConstant;
 
@@ -209,80 +206,67 @@ fn rgb_to_hsv(rgb: vec3f) -> vec3f {
 }
 
 fn hand_area_mask(uv: vec2f) -> f32 {
-    // When in hand area passthrough mode, ck_channels are repurposed:
-    // ck_channel0 = hand_left_pos
-    // ck_channel1 = hand_right_pos  
-    // ck_channel2 = hand_area_config (x: radius, y: feathering_radius, z: enable_feathering, w: static_mask)
-    let radius = pc.ck_channel2.x;
-    let feathering_radius = pc.ck_channel2.y;
-    let enable_feathering = pc.ck_channel2.z > 0.5;
-    let static_mask = pc.ck_channel2.w > 0.5;
+    let radius = pc.hand_area_config.x;
+    let feathering_radius = pc.hand_area_config.y;
+    let enable_feathering = pc.hand_area_config.z > 0.5;
+    let static_mask = pc.hand_area_config.w > 0.5;
 
-    // Convert UV coordinates to screen space coordinates (normalized -1 to 1)
     let screen_pos = vec2f((uv.x - 0.5) * 2.0, (0.5 - uv.y) * 2.0);
 
     var left_distance = 1000.0;
     var right_distance = 1000.0;
 
+    // Usamos la última columna de la matriz view_proj_matrix para pasar la posición de la mano derecha
+    let hand_right_pos = pc.view_proj_matrix[3];
+
     if static_mask {
-        // Use fixed hand positions for static mask in screen space
         let left_static_pos = vec2f(-0.4, -0.3);
         let right_static_pos = vec2f(0.4, -0.3);
         left_distance = distance(screen_pos, left_static_pos);
         right_distance = distance(screen_pos, right_static_pos);
     } else {
-        // Transform 3D hand positions to screen space using the view-projection matrix
-        // Hand positions are in world space and need to be projected to screen coordinates
-        
-        // Project left hand position
-        let left_world_pos = vec4f(pc.ck_channel0.x, pc.ck_channel0.y, pc.ck_channel0.z, 1.0);
-        let left_clip_pos = pc.reprojection_transform * left_world_pos;
-        
-        // Perform perspective division to get normalized device coordinates
-        if left_clip_pos.w > 0.0001 { // Check for valid projection
+        // Proyectar la posición de la mano izquierda
+        let left_world_pos = vec4f(pc.hand_left_pos.xyz, 1.0);
+        let left_clip_pos = pc.view_proj_matrix * left_world_pos;
+        if left_clip_pos.w > 0.0001 {
             let left_ndc = left_clip_pos.xy / left_clip_pos.w;
             left_distance = distance(screen_pos, left_ndc);
         }
-        
-        // Project right hand position
-        let right_world_pos = vec4f(pc.ck_channel1.x, pc.ck_channel1.y, pc.ck_channel1.z, 1.0);
-        let right_clip_pos = pc.reprojection_transform * right_world_pos;
-        
-        // Perform perspective division to get normalized device coordinates
-        if right_clip_pos.w > 0.0001 { // Check for valid projection
+
+        // Proyectar la posición de la mano derecha usando la columna 3 de la matriz
+        let right_world_pos = vec4f(hand_right_pos.xyz, 1.0);
+        var right_vp_matrix = pc.view_proj_matrix;
+        right_vp_matrix[3] = vec4f(0.0, 0.0, 0.0, 1.0);
+        let right_clip_pos = right_vp_matrix * right_world_pos;
+        if right_clip_pos.w > 0.0001 {
             let right_ndc = right_clip_pos.xy / right_clip_pos.w;
             right_distance = distance(screen_pos, right_ndc);
         }
     }
 
-    // Scale radius to screen space (convert from meters to normalized coordinates)
-    // The radius is already in meters, so we scale it to screen space based on typical viewing distance
-    let screen_radius = radius * 4.0; // Scale factor to convert from meters to screen space
+    let screen_radius = radius * 4.0;
     let screen_feathering_radius = feathering_radius * 4.0;
+    var mask = 1.0;
 
-    // Calculate mask for each hand - return low values for passthrough areas (hand areas)
-    // and high values for VR content areas (non-hand areas)
-    var mask = 1.0; // Default to showing VR content
-    
     if left_distance <= screen_radius {
         if enable_feathering && left_distance > screen_radius - screen_feathering_radius {
-            let fade = (screen_radius - left_distance) / screen_feathering_radius;
-            mask = min(mask, 1.0 - fade); // Invert fade for passthrough
+            let fade = (left_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
+            mask = min(mask, fade);
         } else {
-            mask = 0.0; // Full passthrough in hand area
-        }
-    }
-    
-    if right_distance <= screen_radius {
-        if enable_feathering && right_distance > screen_radius - screen_feathering_radius {
-            let fade = (screen_radius - right_distance) / screen_feathering_radius;
-            mask = min(mask, 1.0 - fade); // Invert fade for passthrough
-        } else {
-            mask = 0.0; // Full passthrough in hand area
+            mask = 0.0;
         }
     }
 
-    return mask;
+    if right_distance <= screen_radius {
+        if enable_feathering && right_distance > screen_radius - screen_feathering_radius {
+            let fade = (right_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
+            mask = min(mask, fade);
+        } else {
+            mask = 0.0;
+        }
+    }
+
+    return 1.0 - (1.0 - mask);
 }
 
 //============================================================================================================
