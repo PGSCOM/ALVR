@@ -43,12 +43,12 @@ override C_RIGHT_Y: f32 = 0.0;
 struct PushConstant {
     reprojection_transform: mat4x4f,
     view_idx: u32,
-    passthrough_mode: u32, // 0: Blend, 1: RGB chroma key, 2: HSV chroma key
+    passthrough_mode: u32,
     blend_alpha: f32,
     _align: u32,
-    ck_channel0: vec4f,
-    ck_channel1: vec4f,
-    ck_channel2: vec4f,
+    view_proj_matrix: mat4x4f, // Nueva matriz de vista-proyección
+    hand_left_pos: vec4f,      // Posición de la mano izquierda
+    hand_area_config: vec4f,   // Configuración del área de la mano
 }
 var<push_constant> pc: PushConstant;
 
@@ -148,9 +148,9 @@ fn fragment_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     }
 
     var alpha = pc.blend_alpha; // Default to Blend passthrough mode
-    if pc.passthrough_mode != 0 { // Chroma key
+    if pc.passthrough_mode == 1 || pc.passthrough_mode == 2 { // Chroma key modes
         var current = color;
-        if pc.passthrough_mode == 3 { // HSV mode
+        if pc.passthrough_mode == 2 { // HSV mode
             current = rgb_to_hsv(color);
         }
         let mask = chroma_key_mask(current);
@@ -158,6 +158,11 @@ fn fragment_main(@location(0) uv: vec2f) -> @location(0) vec4f {
         // Note: because of this calculation, we require premultiplied alpha option in the XR layer
         color = max(color * mask, vec3f(0.0));
         alpha = mask;
+    } else if pc.passthrough_mode == 3 { // Hand area passthrough
+        let mask = hand_area_mask(uv);
+        color = max(color * mask, vec3f(0.0));
+        // FIX: Interpolar el alfa usando la opacidad de la configuración y la máscara
+        alpha = mix(1.0 - pc.blend_alpha, 1.0, mask);
     }
 
     return vec4f(color, alpha);
@@ -198,6 +203,70 @@ fn rgb_to_hsv(rgb: vec3f) -> vec3f {
     }
 
     return vec3f(h, s, v);
+}
+
+fn hand_area_mask(uv: vec2f) -> f32 {
+    let radius = pc.hand_area_config.x;
+    let feathering_radius = pc.hand_area_config.y;
+    let enable_feathering = pc.hand_area_config.z > 0.5;
+    let static_mask = pc.hand_area_config.w > 0.5;
+
+    let screen_pos = vec2f((uv.x - 0.5) * 2.0, (0.5 - uv.y) * 2.0);
+
+    var left_distance = 1000.0;
+    var right_distance = 1000.0;
+
+    // Usamos la última columna de la matriz view_proj_matrix para pasar la posición de la mano derecha
+    let hand_right_pos = pc.view_proj_matrix[3];
+
+    if static_mask {
+        let left_static_pos = vec2f(-0.4, -0.3);
+        let right_static_pos = vec2f(0.4, -0.3);
+        left_distance = distance(screen_pos, left_static_pos);
+        right_distance = distance(screen_pos, right_static_pos);
+    } else {
+        // Proyectar la posición de la mano izquierda
+        let left_world_pos = vec4f(pc.hand_left_pos.xyz, 1.0);
+        let left_clip_pos = pc.view_proj_matrix * left_world_pos;
+        if left_clip_pos.w > 0.0001 {
+            let left_ndc = left_clip_pos.xy / left_clip_pos.w;
+            left_distance = distance(screen_pos, left_ndc);
+        }
+
+        // Proyectar la posición de la mano derecha usando la columna 3 de la matriz
+        let right_world_pos = vec4f(hand_right_pos.xyz, 1.0);
+        var right_vp_matrix = pc.view_proj_matrix;
+        right_vp_matrix[3] = vec4f(0.0, 0.0, 0.0, 1.0);
+        let right_clip_pos = right_vp_matrix * right_world_pos;
+        if right_clip_pos.w > 0.0001 {
+            let right_ndc = right_clip_pos.xy / right_clip_pos.w;
+            right_distance = distance(screen_pos, right_ndc);
+        }
+    }
+
+    let screen_radius = radius * 4.0;
+    let screen_feathering_radius = feathering_radius * 4.0;
+    var mask = 1.0;
+
+    if left_distance <= screen_radius {
+        if enable_feathering && left_distance > screen_radius - screen_feathering_radius {
+            let fade = (left_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
+            mask = min(mask, fade);
+        } else {
+            mask = 0.0;
+        }
+    }
+
+    if right_distance <= screen_radius {
+        if enable_feathering && right_distance > screen_radius - screen_feathering_radius {
+            let fade = (right_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
+            mask = min(mask, fade);
+        } else {
+            mask = 0.0;
+        }
+    }
+
+    return 1.0 - (1.0 - mask);
 }
 
 //============================================================================================================
