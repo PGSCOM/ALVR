@@ -223,23 +223,12 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: cargo xtask package-client --ci
 
-      - name: Sign APK
-        uses: ilharp/sign-android-release@v1
-        id: sign_apk
-        with:
-          releaseDir: build/alvr_client_android
-          signingKey: ${{ secrets.SIGNING_KEY }}
-          keyAlias: ${{ secrets.KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-          keyPassword: ${{ secrets.KEY_PASSWORD }}
-          buildToolsVersion: 34.0.0
-
       - name: Upload APK
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: ${{ steps.sign_apk.outputs.signedFile }}
+          asset_path: ./build/alvr_client_android/*.apk
           asset_name: alvr_client_android.apk
           asset_content_type: application/vnd.android.package-archive
