@@ -5,11 +5,8 @@ env:
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Version"
-        required: false
-        default: ""
+  push:
+  pull_request:
 
 jobs:
   prepare_release:
@@ -28,38 +25,9 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Bump version
-        id: bump_version
-        env:
-          RUST_BACKTRACE: 1
-        run: |
-          $versionarg = "${{ github.event.inputs.version }}"
-          $versionarg = If ($versionarg.Length -gt 0) { "--version $versionarg" } else { "" }
-          $out = cargo xtask bump $versionarg.split()
-          echo $out
-          cargo update -p alvr_common
-          echo "::set-output name=version_tag::$(echo $out | sls -CaseSensitive -Pattern '^v.*$')"
-
-      - name: Push changes
-        uses: stefanzweifel/git-auto-commit-action@v4
-        with:
-          commit_message: "[Auto] Bump version"
-
       - name: Output ref for later checkouts
         id: output_ref
         run: echo "::set-output name=release_ref::$(git rev-parse HEAD)"
-
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.bump_version.outputs.version_tag }}
-          release_name: ALVR ${{ steps.bump_version.outputs.version_tag }}
-          draft: true
-          prerelease: false
-          commitish: ${{ steps.output_ref.outputs.release_ref }}
 
   build_windows_streamer:
     runs-on: windows-2022
