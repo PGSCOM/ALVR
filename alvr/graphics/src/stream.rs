@@ -1,7 +1,7 @@
 use super::{GraphicsContext, MAX_PUSH_CONSTANTS_SIZE, staging::StagingRenderer};
 use alvr_common::{
     ViewParams, Pose,
-    glam::{self, Mat4, UVec2, Vec3, Vec4},
+    glam::{self, Mat4, UVec2, Vec2, Vec3, Vec4},
 };
 use alvr_session::{FoveatedEncodingConfig, PassthroughMode, UpscalingConfig};
 use std::{collections::HashMap, ffi::c_void, iter, mem, rc::Rc};
@@ -36,11 +36,10 @@ const CK_CHANNEL0_CONST_OFFSET: u32 = ALPHA_CONST_OFFSET + FLOAT_SIZE + U32_SIZE
 const CK_CHANNEL1_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET + VEC4_SIZE;
 const CK_CHANNEL2_CONST_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET + VEC4_SIZE;
 
-// Offsets para los nuevos push constants para hand area passthrough
-const VIEW_PROJ_MATRIX_CONST_OFFSET: u32 = CK_CHANNEL0_CONST_OFFSET; // mat4x4f (16 floats)
-const HAND_LEFT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET;          // vec4f
-const HAND_RIGHT_POS_OFFSET: u32 = CK_CHANNEL1_CONST_OFFSET + VEC4_SIZE; // vec4f
-const HAND_AREA_CONFIG_OFFSET: u32 = CK_CHANNEL2_CONST_OFFSET;       // vec4f
+// For hand area passthrough, reuse the chroma key channels:
+// CK_CHANNEL0 = left hand position in screen space
+// CK_CHANNEL1 = right hand position in screen space  
+// CK_CHANNEL2 = hand area configuration
 const PUSH_CONSTANTS_SIZE: u32 = CK_CHANNEL2_CONST_OFFSET + VEC4_SIZE;
 
 const _: () = assert!(
@@ -342,92 +341,7 @@ impl StreamRenderer {
                 &(view_idx as u32).to_le_bytes(),
             );
             render_pass.set_bind_group(0, &self.views_objects[view_idx].bind_group, &[]);
-
-            // --- NUEVO: Pasar matriz de vista-proyección y datos de mano para HandAreaPassthrough ---
-            if let Some(PassthroughMode::HandAreaPassthrough(config)) = passthrough {
-                // Calcular la matriz de vista-proyección (VP) para el ojo actual
-                let view_pose = &view_params.output_view_params.pose;
-                let view_matrix = Mat4::from_quat(view_pose.orientation).inverse() * Mat4::from_translation(-view_pose.position);
-                let proj_matrix = super::projection_from_fov(view_params.output_view_params.fov);
-                let mut vp_matrix = proj_matrix * view_matrix;
-
-                // Obtener posiciones de las manos
-                let left_pos = hand_tracking
-                    .and_then(|t| t.left_hand_pose.map(|p| p.position))
-                    .unwrap_or(Vec3::new(-0.2, -0.15, -0.3));
-                let right_pos = hand_tracking
-                    .and_then(|t| t.right_hand_pose.map(|p| p.position))
-                    .unwrap_or(Vec3::new(0.2, -0.15, -0.3));
-
-                // Trampa: pasar la posición de la mano derecha en la última columna de la matriz VP
-                vp_matrix.w_axis = Vec4::new(right_pos.x, right_pos.y, right_pos.z, 1.0);
-
-                // Pasar la matriz VP como push constant (mat4x4f = 16 floats = 64 bytes)
-                let vp_matrix_bytes = vp_matrix
-                    .to_cols_array()
-                    .iter()
-                    .flat_map(|v| v.to_le_bytes())
-                    .collect::<Vec<u8>>();
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    VIEW_PROJ_MATRIX_CONST_OFFSET,
-                    &vp_matrix_bytes,
-                );
-
-                // Pasar la posición de la mano izquierda (vec4f)
-                let left_pos_vec4 = Vec4::new(left_pos.x, left_pos.y, left_pos.z, 0.0);
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_LEFT_POS_OFFSET,
-                    &left_pos_vec4.x.to_le_bytes(),
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_LEFT_POS_OFFSET + FLOAT_SIZE,
-                    &left_pos_vec4.y.to_le_bytes(),
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_LEFT_POS_OFFSET + 2 * FLOAT_SIZE,
-                    &left_pos_vec4.z.to_le_bytes(),
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_LEFT_POS_OFFSET + 3 * FLOAT_SIZE,
-                    &left_pos_vec4.w.to_le_bytes(),
-                );
-
-                // Pasar la configuración del área de la mano (vec4f)
-                let hand_config_vec4 = Vec4::new(
-                    config.hand_area_radius,
-                    config.feathering_radius,
-                    if config.enable_feathering { 1.0 } else { 0.0 },
-                    if config.static_mask { 1.0 } else { 0.0 },
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_AREA_CONFIG_OFFSET,
-                    &hand_config_vec4.x.to_le_bytes(),
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_AREA_CONFIG_OFFSET + FLOAT_SIZE,
-                    &hand_config_vec4.y.to_le_bytes(),
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_AREA_CONFIG_OFFSET + 2 * FLOAT_SIZE,
-                    &hand_config_vec4.z.to_le_bytes(),
-                );
-                render_pass.set_push_constants(
-                    ShaderStages::VERTEX_FRAGMENT,
-                    HAND_AREA_CONFIG_OFFSET + 3 * FLOAT_SIZE,
-                    &hand_config_vec4.w.to_le_bytes(),
-                );
-            } else {
-                // Otros modos: lógica original
-                set_passthrough_push_constants(&mut render_pass, passthrough, hand_tracking);
-            }
+            set_passthrough_push_constants(&mut render_pass, passthrough, hand_tracking);
 
             render_pass.draw(0..4, 0..1);
         }
@@ -544,7 +458,7 @@ fn set_passthrough_push_constants(
             set_u32(render_pass, PASSTHROUGH_MODE_OFFSET, 3);
             set_float(render_pass, ALPHA_CONST_OFFSET, config.opacity);
 
-            // Set hand positions (or default positions if tracking not available)
+            // Get hand positions (or default positions if tracking not available)
             let left_pos = hand_tracking
                 .and_then(|tracking| tracking.left_hand_pose.map(|pose| pose.position))
                 .unwrap_or(Vec3::new(-0.2, -0.15, -0.3));  // Default left hand position in meters
@@ -552,13 +466,29 @@ fn set_passthrough_push_constants(
                 .and_then(|tracking| tracking.right_hand_pose.map(|pose| pose.position))
                 .unwrap_or(Vec3::new(0.2, -0.15, -0.3));   // Default right hand position in meters
 
-            set_vec4(render_pass, HAND_LEFT_POS_OFFSET, Vec4::new(left_pos.x, left_pos.y, left_pos.z, 0.0));
-            set_vec4(render_pass, HAND_RIGHT_POS_OFFSET, Vec4::new(right_pos.x, right_pos.y, right_pos.z, 0.0));
+            // For now, use a simple mapping from world space to screen space
+            // This assumes hands are roughly 30cm in front and maps to [-1, 1] screen space
+            let left_screen = Vec2::new(
+                left_pos.x * 3.0,      // Scale X position to screen space
+                -left_pos.y * 3.0,     // Scale Y position to screen space (flip Y)
+            );
+            let right_screen = Vec2::new(
+                right_pos.x * 3.0,     // Scale X position to screen space  
+                -right_pos.y * 3.0,    // Scale Y position to screen space (flip Y)
+            );
 
-            // Set hand area configuration: radius, feathering_radius, enable_feathering, static_mask
+            // Store left hand screen position in CK_CHANNEL0
+            set_vec4(render_pass, CK_CHANNEL0_CONST_OFFSET, 
+                Vec4::new(left_screen.x, left_screen.y, 0.0, 0.0));
+            
+            // Store right hand screen position in CK_CHANNEL1  
+            set_vec4(render_pass, CK_CHANNEL1_CONST_OFFSET, 
+                Vec4::new(right_screen.x, right_screen.y, 0.0, 0.0));
+
+            // Store hand area configuration in CK_CHANNEL2
             set_vec4(
                 render_pass,
-                HAND_AREA_CONFIG_OFFSET,
+                CK_CHANNEL2_CONST_OFFSET,
                 Vec4::new(
                     config.hand_area_radius,
                     config.feathering_radius,

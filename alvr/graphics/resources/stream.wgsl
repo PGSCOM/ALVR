@@ -46,9 +46,9 @@ struct PushConstant {
     passthrough_mode: u32,
     blend_alpha: f32,
     _align: u32,
-    view_proj_matrix: mat4x4f, // Nueva matriz de vista-proyección
-    hand_left_pos: vec4f,      // Posición de la mano izquierda
-    hand_area_config: vec4f,   // Configuración del área de la mano
+    ck_channel0: vec4f,    // Chroma key channel 0 / hand left pos
+    ck_channel1: vec4f,    // Chroma key channel 1 / hand right pos  
+    ck_channel2: vec4f,    // Chroma key channel 2 / hand area config
 }
 var<push_constant> pc: PushConstant;
 
@@ -206,67 +206,59 @@ fn rgb_to_hsv(rgb: vec3f) -> vec3f {
 }
 
 fn hand_area_mask(uv: vec2f) -> f32 {
-    let radius = pc.hand_area_config.x;
-    let feathering_radius = pc.hand_area_config.y;
-    let enable_feathering = pc.hand_area_config.z > 0.5;
-    let static_mask = pc.hand_area_config.w > 0.5;
+    let radius = pc.ck_channel2.x;      // hand_area_radius
+    let feathering_radius = pc.ck_channel2.y;  // feathering_radius
+    let enable_feathering = pc.ck_channel2.z > 0.5;
+    let static_mask = pc.ck_channel2.w > 0.5;
 
-    let screen_pos = vec2f((uv.x - 0.5) * 2.0, (0.5 - uv.y) * 2.0);
+    // Convert UV coordinates to normalized screen space [-1, 1]
+    let screen_pos = vec2f((uv.x - 0.5) * 2.0, (uv.y - 0.5) * 2.0);
 
     var left_distance = 1000.0;
     var right_distance = 1000.0;
 
-    // Usamos la última columna de la matriz view_proj_matrix para pasar la posición de la mano derecha
-    let hand_right_pos = pc.view_proj_matrix[3];
-
     if static_mask {
+        // Static hand positions for testing
         let left_static_pos = vec2f(-0.4, -0.3);
         let right_static_pos = vec2f(0.4, -0.3);
         left_distance = distance(screen_pos, left_static_pos);
         right_distance = distance(screen_pos, right_static_pos);
     } else {
-        // Proyectar la posición de la mano izquierda
-        let left_world_pos = vec4f(pc.hand_left_pos.xyz, 1.0);
-        let left_clip_pos = pc.view_proj_matrix * left_world_pos;
-        if left_clip_pos.w > 0.0001 {
-            let left_ndc = left_clip_pos.xy / left_clip_pos.w;
-            left_distance = distance(screen_pos, left_ndc);
-        }
-
-        // Proyectar la posición de la mano derecha usando la columna 3 de la matriz
-        let right_world_pos = vec4f(hand_right_pos.xyz, 1.0);
-        var right_vp_matrix = pc.view_proj_matrix;
-        right_vp_matrix[3] = vec4f(0.0, 0.0, 0.0, 1.0);
-        let right_clip_pos = right_vp_matrix * right_world_pos;
-        if right_clip_pos.w > 0.0001 {
-            let right_ndc = right_clip_pos.xy / right_clip_pos.w;
-            right_distance = distance(screen_pos, right_ndc);
-        }
+        // Use hand positions directly as screen coordinates
+        // The Rust code will transform world positions to screen space before passing them
+        let left_hand_screen = pc.ck_channel0.xy;  // Left hand position (already in screen space)
+        let right_hand_screen = pc.ck_channel1.xy; // Right hand position (already in screen space)
+        
+        left_distance = distance(screen_pos, left_hand_screen);
+        right_distance = distance(screen_pos, right_hand_screen);
     }
 
-    let screen_radius = radius * 4.0;
-    let screen_feathering_radius = feathering_radius * 4.0;
+    // Scale radius appropriately for screen space
+    let screen_radius = radius * 2.0;  // Simplified scaling
+    let screen_feathering_radius = feathering_radius * 2.0;
     var mask = 1.0;
 
+    // Check left hand area
     if left_distance <= screen_radius {
         if enable_feathering && left_distance > screen_radius - screen_feathering_radius {
             let fade = (left_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
             mask = min(mask, fade);
         } else {
-            mask = 0.0;
+            mask = 0.0;  // Inside hand area = show passthrough
         }
     }
 
+    // Check right hand area  
     if right_distance <= screen_radius {
         if enable_feathering && right_distance > screen_radius - screen_feathering_radius {
             let fade = (right_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
             mask = min(mask, fade);
         } else {
-            mask = 0.0;
+            mask = 0.0;  // Inside hand area = show passthrough
         }
     }
 
-    return 1.0 - (1.0 - mask);
+    return mask;  // 0.0 = passthrough, 1.0 = VR content
 }
 
 //============================================================================================================
