@@ -1,4 +1,4 @@
-name: Create release
+name: Create release1
 
 env:
   CARGO_TERM_COLOR: always
