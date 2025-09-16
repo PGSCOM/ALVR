@@ -209,4 +209,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: alvr_client_android
-          path: ./app/build/outputs/apk/release/*.apk
+          path: /home/runner/work/ALVR/ALVR/target/distribution/apk/alvr_client_openxr.apk
