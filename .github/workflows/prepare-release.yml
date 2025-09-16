@@ -88,23 +88,16 @@ jobs:
           cargo xtask package-launcher --ci
 
       - name: Upload streamer
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: ./build/alvr_streamer_windows.zip
-          asset_name: alvr_streamer_windows.zip
-          asset_content_type: application/zip
+          name: alvr_streamer_windows.zip
+          path: ./build/alvr_streamer_windows.zip
+
       - name: Upload launcher
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: ./build/alvr_launcher_windows.zip
-          asset_name: alvr_launcher_windows.zip
-          asset_content_type: application/zip
+          name: alvr_launcher_windows.zip
+          path: ./build/alvr_launcher_windows.zip
 
   build_linux_streamer:
     runs-on: ubuntu-22.04
@@ -139,23 +132,16 @@ jobs:
           cargo xtask package-launcher --ci
 
       - name: Upload streamer (tar.gz)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: ./build/alvr_streamer_linux.tar.gz
-          asset_name: alvr_streamer_linux.tar.gz
-          asset_content_type: application/gzip
+          name: alvr_streamer_linux.tar.gz
+          path: ./build/alvr_streamer_linux.tar.gz
+
       - name: Upload launcher
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: ./build/alvr_launcher_linux.tar.gz
-          asset_name: alvr_launcher_linux.tar.gz
-          asset_content_type: application/gzip
+          name: alvr_launcher_linux.tar.gz
+          path: ./build/alvr_launcher_linux.tar.gz
 
   build_flatpak_bundle:
     runs-on: ubuntu-latest
@@ -181,14 +167,10 @@ jobs:
           flatpak build-bundle .flatpak-repo com.valvesoftware.Steam.Utility.alvr.flatpak com.valvesoftware.Steam.Utility.alvr stable --runtime
 
       - name: Upload flatpak streamer for Linux
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: com.valvesoftware.Steam.Utility.alvr.flatpak
-          asset_name: com.valvesoftware.Steam.Utility.alvr.flatpak
-          asset_content_type: application/octet-stream
+          name: com.valvesoftware.Steam.Utility.alvr.flatpak
+          path: com.valvesoftware.Steam.Utility.alvr.flatpak
 
   build_android_client:
     runs-on: ubuntu-latest
@@ -223,12 +205,8 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: cargo xtask package-client --ci
 
-      - name: Upload APK
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload APK(s)
+        uses: actions/upload-artifact@v4
         with:
-          upload_url: ${{ needs.prepare_release.outputs.upload_url }}
-          asset_path: ./build/alvr_client_android/*.apk
-          asset_name: alvr_client_android.apk
-          asset_content_type: application/vnd.android.package-archive
+          name: alvr_client_android
+          path: ./app/build/outputs/apk/release/*.apk
