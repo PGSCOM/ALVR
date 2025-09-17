@@ -98,6 +98,8 @@ pub struct StreamContext {
     renderer: StreamRenderer,
     decoder: Option<(VideoDecoderConfig, VideoDecoderSource)>,
     use_custom_reprojection: bool,
+    // Store last known hand positions for passthrough
+    last_hand_positions: Arc<RwLock<[Option<Vec3>; 2]>>, // [left, right]
 }
 
 impl StreamContext {
@@ -239,6 +241,7 @@ impl StreamContext {
             renderer,
             decoder: None,
             use_custom_reprojection: platform.is_yvr(),
+            last_hand_positions: Arc::new(RwLock::new([None; 2])),
         };
 
         this.update_reference_space();
@@ -250,57 +253,20 @@ impl StreamContext {
         self.config.passthrough.is_some()
     }
 
-    fn get_hand_tracking_data(&self, xr_time: xr::Time) -> Option<HandTrackingData> {
-        // Get hand positions directly at render time using the same method as input thread
-        let interaction_ctx = self.interaction_context.read();
-        let platform = alvr_system_info::platform();
+    fn get_hand_tracking_data(&self, _xr_time: xr::Time) -> Option<HandTrackingData> {
+        // Read the last known hand positions from the input thread
+        let positions = self.last_hand_positions.read();
         
-        // Convert XR time to Duration format used by get_hand_data
-        let now = crate::from_xr_time(xr_time);
-        let target_time = now; // For rendering, we use current time as target
+        let left_pose = positions[0].map(|position| Pose {
+            position,
+            orientation: Quat::IDENTITY, // We only need position for passthrough
+        });
         
-        // Get controller poses directly using ALVR's hand data processing
-        let mut left_controller_pose = Pose::IDENTITY;
-        let mut left_palm_pose = Pose::IDENTITY;
-        let mut right_controller_pose = Pose::IDENTITY; 
-        let mut right_palm_pose = Pose::IDENTITY;
-
-        // Use the same get_hand_data function that the input thread uses
-        let (left_hand_motion, _) = crate::interaction::get_hand_data(
-            &self.xr_session,
-            platform,
-            &self.stage_reference_space,
-            now,
-            target_time,
-            &interaction_ctx.hands_interaction[0],
-            &mut left_controller_pose,
-            &mut left_palm_pose,
-        );
-
-        let (right_hand_motion, _) = crate::interaction::get_hand_data(
-            &self.xr_session,
-            platform,
-            &self.stage_reference_space,
-            now,
-            target_time,
-            &interaction_ctx.hands_interaction[1],
-            &mut right_controller_pose,
-            &mut right_palm_pose,
-        );
-
-        // Use controller poses if available, otherwise try palm poses
-        let left_pose = if left_hand_motion.is_some() {
-            Some(left_controller_pose)
-        } else {
-            None
-        };
-
-        let right_pose = if right_hand_motion.is_some() {
-            Some(right_controller_pose) 
-        } else {
-            None
-        };
-
+        let right_pose = positions[1].map(|position| Pose {
+            position,
+            orientation: Quat::IDENTITY, // We only need position for passthrough
+        });
+        
         if left_pose.is_some() || right_pose.is_some() {
             Some(HandTrackingData {
                 left_hand_pose: left_pose,
@@ -342,6 +308,7 @@ impl StreamContext {
             let interaction_ctx = Arc::clone(&self.interaction_context);
             let stage_reference_space = Arc::clone(&self.stage_reference_space);
             let view_reference_space = Arc::clone(&self.view_reference_space);
+            let last_hand_positions = Arc::clone(&self.last_hand_positions);
             let refresh_rate = self.config.refresh_rate_hint;
             let running = Arc::clone(&self.input_thread_running);
             move || {
@@ -351,6 +318,7 @@ impl StreamContext {
                     &interaction_ctx,
                     &stage_reference_space,
                     &view_reference_space,
+                    &last_hand_positions,
                     refresh_rate,
                     running,
                 )
@@ -585,6 +553,7 @@ fn stream_input_loop(
     interaction_ctx: &RwLock<InteractionContext>,
     stage_reference_space: &xr::Space,
     view_reference_space: &xr::Space,
+    last_hand_positions: &RwLock<[Option<Vec3>; 2]>,
     refresh_rate: f32,
     running: Arc<RelaxedAtomic>,
 ) {
@@ -654,6 +623,21 @@ fn stream_input_loop(
             &mut last_controller_poses[1],
             &mut last_palm_poses[1],
         );
+
+        // Update shared hand positions for passthrough
+        {
+            let mut positions = last_hand_positions.write();
+            positions[0] = if left_hand_motion.is_some() {
+                Some(last_controller_poses[0].position)
+            } else {
+                None
+            };
+            positions[1] = if right_hand_motion.is_some() {
+                Some(last_controller_poses[1].position)
+            } else {
+                None
+            };
+        }
 
         // Note: When multimodal input is enabled, we are sure that when free hands are used
         // (not holding controllers) the controller data is None.
