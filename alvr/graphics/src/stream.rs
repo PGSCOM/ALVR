@@ -466,12 +466,12 @@ fn set_passthrough_push_constants(
             // For now, use a simple mapping from world space to screen space
             // This assumes hands are roughly 30cm in front and maps to [-1, 1] screen space
             let left_screen = Vec2::new(
-                left_pos.x * 3.0,      // Scale X position to screen space
-                -left_pos.y * 3.0,     // Scale Y position to screen space (flip Y)
+                (left_pos.x * 2.0).clamp(-1.0, 1.0),      // Scale X position to screen space, clamp to valid range
+                (-left_pos.y * 2.0).clamp(-1.0, 1.0),     // Scale Y position to screen space (flip Y), clamp to valid range
             );
             let right_screen = Vec2::new(
-                right_pos.x * 3.0,     // Scale X position to screen space  
-                -right_pos.y * 3.0,    // Scale Y position to screen space (flip Y)
+                (right_pos.x * 2.0).clamp(-1.0, 1.0),     // Scale X position to screen space, clamp to valid range  
+                (-right_pos.y * 2.0).clamp(-1.0, 1.0),    // Scale Y position to screen space (flip Y), clamp to valid range
             );
 
             // Store left hand screen position in CK_CHANNEL0

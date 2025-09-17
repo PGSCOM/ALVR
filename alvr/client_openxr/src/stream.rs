@@ -255,6 +255,10 @@ impl StreamContext {
         let interaction_ctx = self.interaction_context.read();
         let platform = alvr_system_info::platform();
         
+        // Convert XR time to Duration format used by get_hand_data
+        let now = crate::from_xr_time(xr_time);
+        let target_time = now; // For rendering, we use current time as target
+        
         // Get controller poses directly using ALVR's hand data processing
         let mut left_controller_pose = Pose::IDENTITY;
         let mut left_palm_pose = Pose::IDENTITY;
@@ -266,8 +270,8 @@ impl StreamContext {
             &self.xr_session,
             platform,
             &self.stage_reference_space,
-            Duration::ZERO, // We don't need proper timing for position
-            Duration::ZERO, // We don't need proper timing for position
+            now,
+            target_time,
             &interaction_ctx.hands_interaction[0],
             &mut left_controller_pose,
             &mut left_palm_pose,
@@ -277,8 +281,8 @@ impl StreamContext {
             &self.xr_session,
             platform,
             &self.stage_reference_space,
-            Duration::ZERO, // We don't need proper timing for position
-            Duration::ZERO, // We don't need proper timing for position
+            now,
+            target_time,
             &interaction_ctx.hands_interaction[1],
             &mut right_controller_pose,
             &mut right_palm_pose,
