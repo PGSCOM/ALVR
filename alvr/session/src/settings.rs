@@ -620,6 +620,42 @@ pub struct HsvChromaKeyConfig {
 }
 
 #[derive(SettingsSchema, Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct HandAreaPassthroughConfig {
+    #[schema(strings(
+        help = "Radius of the passthrough area around each hand in meters"
+    ))]
+    #[schema(flag = "real-time")]
+    #[schema(gui(slider(min = 0.05, max = 0.5, step = 0.01)))]
+    pub hand_area_radius: f32,
+
+    #[schema(strings(
+        help = "Opacity of the passthrough area (0 = fully transparent, 1 = fully opaque)"
+    ))]
+    #[schema(flag = "real-time")]
+    #[schema(gui(slider(min = 0.0, max = 1.0, step = 0.01)))]
+    pub opacity: f32,
+
+    #[schema(strings(
+        help = "Use static hand areas instead of tracking hand movement"
+    ))]
+    #[schema(flag = "real-time")]
+    pub static_mask: bool,
+
+    #[schema(strings(
+        help = "Enable feathering/smoothing at the edges of the hand areas"
+    ))]
+    #[schema(flag = "real-time")]
+    pub enable_feathering: bool,
+
+    #[schema(strings(
+        help = "Feathering radius for smooth transitions at hand area edges"
+    ))]
+    #[schema(flag = "real-time")]
+    #[schema(gui(slider(min = 0.01, max = 0.1, step = 0.005)))]
+    pub feathering_radius: f32,
+}
+
+#[derive(SettingsSchema, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[schema(gui = "button_group")]
 pub enum PassthroughMode {
     Blend {
@@ -640,6 +676,9 @@ This is a similar effect to AR glasses."
 
     #[schema(strings(display_name = "HSV Chroma Key"))]
     HsvChromaKey(#[schema(flag = "real-time")] HsvChromaKeyConfig),
+
+    #[schema(strings(display_name = "Hand Area Passthrough"))]
+    HandAreaPassthrough(#[schema(flag = "real-time")] HandAreaPassthroughConfig),
 }
 
 #[repr(u8)]
@@ -1609,6 +1648,13 @@ pub fn session_settings_default() -> SettingsDefault {
                         value_start_min: 0.1,
                         value_end_min: 1.0,
                         value_end_max: 1.1,
+                    },
+                    HandAreaPassthrough: HandAreaPassthroughConfigDefault {
+                        hand_area_radius: 0.15,
+                        opacity: 0.8,
+                        static_mask: false,
+                        enable_feathering: true,
+                        feathering_radius: 0.03,
                     },
                 },
             },

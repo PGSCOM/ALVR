@@ -42,12 +42,12 @@ override C_RIGHT_Y: f32 = 0.0;
 struct PushConstant {
     reprojection_transform: mat4x4f,
     view_idx: u32,
-    passthrough_mode: u32, // 0: Blend, 1: RGB chroma key, 2: HSV chroma key
+    passthrough_mode: u32,
     blend_alpha: f32,
     _align: u32,
-    ck_channel0: vec4f,
-    ck_channel1: vec4f,
-    ck_channel2: vec4f,
+    ck_channel0: vec4f,    // Chroma key channel 0 / hand left pos
+    ck_channel1: vec4f,    // Chroma key channel 1 / hand right pos  
+    ck_channel2: vec4f,    // Chroma key channel 2 / hand area config
 }
 var<push_constant> pc: PushConstant;
 
@@ -147,7 +147,7 @@ fn fragment_main(@location(0) uv: vec2f) -> @location(0) vec4f {
     }
 
     var alpha = pc.blend_alpha; // Default to Blend passthrough mode
-    if pc.passthrough_mode != 0 { // Chroma key
+    if pc.passthrough_mode == 1 || pc.passthrough_mode == 2 { // Chroma key modes
         var current = color;
         if pc.passthrough_mode == 2 { // HSV mode
             current = rgb_to_hsv(color);
@@ -157,6 +157,11 @@ fn fragment_main(@location(0) uv: vec2f) -> @location(0) vec4f {
         // Note: because of this calculation, we require premultiplied alpha option in the XR layer
         color = max(color * mask, vec3f(0.0));
         alpha = mask;
+    } else if pc.passthrough_mode == 3 { // Hand area passthrough
+        let mask = hand_area_mask(uv);
+        color = max(color * mask, vec3f(0.0));
+        // FIX: Interpolar el alfa usando la opacidad de la configuración y la máscara
+        alpha = mix(1.0 - pc.blend_alpha, 1.0, mask);
     }
 
     return vec4f(color, alpha);
@@ -207,6 +212,62 @@ fn rgb_to_hsv(rgb: vec3f) -> vec3f {
     }
 
     return vec3f(h, s, v);
+}
+
+fn hand_area_mask(uv: vec2f) -> f32 {
+    let radius = pc.ck_channel2.x;      // hand_area_radius
+    let feathering_radius = pc.ck_channel2.y;  // feathering_radius
+    let enable_feathering = pc.ck_channel2.z > 0.5;
+    let static_mask = pc.ck_channel2.w > 0.5;
+
+    // Convert UV coordinates to normalized screen space [-1, 1]
+    let screen_pos = vec2f((uv.x - 0.5) * 2.0, (uv.y - 0.5) * 2.0);
+
+    var left_distance = 1000.0;
+    var right_distance = 1000.0;
+
+    if static_mask {
+        // Static hand positions for testing
+        let left_static_pos = vec2f(-0.4, -0.3);
+        let right_static_pos = vec2f(0.4, -0.3);
+        left_distance = distance(screen_pos, left_static_pos);
+        right_distance = distance(screen_pos, right_static_pos);
+    } else {
+        // Use hand positions directly as screen coordinates
+        // The Rust code will transform world positions to screen space before passing them
+        let left_hand_screen = pc.ck_channel0.xy;  // Left hand position (already in screen space)
+        let right_hand_screen = pc.ck_channel1.xy; // Right hand position (already in screen space)
+        
+        left_distance = distance(screen_pos, left_hand_screen);
+        right_distance = distance(screen_pos, right_hand_screen);
+    }
+
+    // Scale radius appropriately for screen space
+    let screen_radius = radius * 2.0;  // Simplified scaling
+    let screen_feathering_radius = feathering_radius * 2.0;
+    var mask = 1.0;
+
+    // Check left hand area
+    if left_distance <= screen_radius {
+        if enable_feathering && left_distance > screen_radius - screen_feathering_radius {
+            let fade = (left_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
+            mask = min(mask, fade);
+        } else {
+            mask = 0.0;  // Inside hand area = show passthrough
+        }
+    }
+
+    // Check right hand area  
+    if right_distance <= screen_radius {
+        if enable_feathering && right_distance > screen_radius - screen_feathering_radius {
+            let fade = (right_distance - (screen_radius - screen_feathering_radius)) / screen_feathering_radius;
+            mask = min(mask, fade);
+        } else {
+            mask = 0.0;  // Inside hand area = show passthrough
+        }
+    }
+
+    return mask;  // 0.0 = passthrough, 1.0 = VR content
 }
 
 //============================================================================================================
